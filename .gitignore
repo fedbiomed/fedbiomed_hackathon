@@ -410,3 +410,4 @@ data/*
 **/config/ip_assign
 **/config/wireguard
 .scannerwork
+doc

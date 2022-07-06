@@ -4,6 +4,9 @@ from site import USER_SITE
 from typing import Optional
 from functools import wraps
 
+from hashlib import sha512
+
+
 #from argon2 import PasswordHasher
 from flask import Flask, jsonify, request, redirect, Response, abort, url_for
 from database import Database
@@ -53,7 +56,7 @@ class User(UserMixin):
     def get(self,  id=None):
         return self
 
-def admin_login(func):
+def admin_login_required(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         
@@ -69,6 +72,30 @@ def admin_login(func):
     #     return False
 
 
+def set_password_hash(password: str) -> str:
+    """ Method for setting password hash 
+    Args: 
+
+        password (str): Password of the user
+    """
+    return sha512(password.encode('utf-8')).hexdigest()
+
+
+def check_password_hash(password: str, user_password_hash: str) -> bool:
+    """ Method used to compare password hashes. 
+        Used to verify the user password
+    Args: 
+
+        password (str): Password to compare against the user password hash
+        user_password_hash (str): User password hash
+    Returns:
+        True if the password hash matches the user password one
+        False otherwise
+    """
+    password_hash = sha512(password.encode('utf-8'))
+    return password_hash.hexdigest() == user_password_hash
+
+
 class UserRoles():
     pass
 
@@ -82,9 +109,12 @@ def create_user():
     query = gui_database.query()
     
     table.update({"login": "user",
-                  "password": 12345, 
+                  "password": set_password_hash("12345"), 
                   "role": 'admin'})
 
+    table.update({"login": "user2",
+                  "password": set_password_hash("12345"), 
+                  "role": 'BasicUser'})
 @app.before_request
 def before_request():
     # redirect connections from HTTP to HTTPS
@@ -118,7 +148,7 @@ def login():
     if req is None:
         return "Please login"
     login = req.get('login', None)
-    passwd = req.get('password', None)
+    passwd = req.get('password', None) # get passwd's hash
     
     if not all((login, passwd)):
         print("ERROR: login or passwd missing")
@@ -127,8 +157,8 @@ def login():
     table.clear_cache()
     
     query = gui_database.query()
-    
-    res = table.get((query.login == login) & (query.password == passwd))
+    hashed_passwd = set_password_hash(passwd)
+    res = table.get((query.login == login) & (query.password == hashed_passwd))
     print(res)
     is_admin = True if res.get("role") == 'admin' else False
     print("is_admin", is_admin)
@@ -151,7 +181,7 @@ def login():
 @app.route("/logout", methods=['GET'])
 def logout2():
     logout_user()
-    USER = User()
+    USER = User()  # reset global variable USER
     print("disconnection successful")
     # TODO : redirect towards login webpage
     return redirect("/")
@@ -159,7 +189,7 @@ def logout2():
 # protect a view with a principal for that need
 @app.route('/admin')
 @login_required
-@admin_login
+@admin_login_required
 def do_admin_index():
     return Response('Only if you are an admin')
 
@@ -177,7 +207,8 @@ def check_if_user_admin(user: User) -> bool:
     table.clear_cache()
     
     query = gui_database.query()
-    res = table.get((query.login == login) & (query.password == passwd))
+    hashed_passwd = set_password_hash(passwd)
+    res = table.get((query.login == login) & (query.password == hashed_passwd))
     print("RES", res)
     if res is not None and res.get("role") == "admin":
         user.roles = ["admin"]

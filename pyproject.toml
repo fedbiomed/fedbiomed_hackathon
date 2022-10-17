@@ -1,0 +1,126 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+    "pip >=19",
+    "setuptools >=62.0",
+    "setuptools-scm[toml] >=6.2",
+]
+
+[project]
+name = "fedbiomed"
+version = "3.6.0.dev"
+description = "Fed-BioMed - federated learning tools for biomedical research"
+readme = "README.md"
+requires-python = ">=3.9,<3.10"
+license = {file = "LICENSE.md"}
+authors = [  # FIXME: decide on an authors' mentioning + ordering policy
+    {name = "Marc Vesin", email = "marc.vesin@inria.fr"},
+    {name = "Sergen Cansiz", email = "sergen.cansiz@inria.fr"},
+    {name = "Jean Luc Szpyrka", email = "jean-luc.szpyrka@inria.fr"},
+    {name = "Yannick Bouillard", email = "yannick.bouillard@inria.fr"},
+    {name = "Francesco Cremonesi", email = "francesco.cremonesi@inria.fr"},
+    {name = "Marco Lorenzi", email = "marco.lorenzi@inria.fr"},
+    {name = "Irene Balelli", email = "irene.balleli@inria.fr"},
+    {name = "Paul Andrey", email = "paul.andrey@inria.fr"},
+    {name = "Erwan Demairy", email = "erwan.demairy@inria.fr"},
+]
+maintainers = [
+    {name = "Marc Vesin", email = "marc.vesin@inria.fr"},
+    {name = "Sergen Cansiz", email = "sergen.cansiz@inria.fr"},
+    {name = "Yannick Bouillard", email = "yannick.bouillard@inria.fr"},
+    {name = "Francesco Cremonesi", email = "francesco.cremonesi@inria.fr"},
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Healthcare Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    # TODO: add "Operation System ::" classifiers
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
+]
+dependencies = [
+    # application
+    "persist-queue >=0.5.1,<0.6.0",
+    "python-minifier ==2.5.0",
+    "tabulate >=0.8.9,<0.9.0",
+    "tinydb >=4.4.0,<5.0.0",
+    "validators >=0.18.2,<0.19.0",
+
+    # datasets
+    "itk",
+    "FLamby@git+https://github.com/owkin/FLamby.git",
+    "openpyxl >=3.0.9,<3.1",
+    "pandas >=1.2.3,<2.0.0",
+    "tqdm >=4.59.0,<5.0.0",  # NOTE: only used in one notebook
+
+    # machine learning
+    "monai >=1.0.0,<1.1.0",
+    "opacus >=1.2.0,<1.3.0",
+    "scikit-learn <=0.24.2",
+    "tensorboard",
+    "torch >=1.8.0,<2.0.0",
+    "torchvision >=0.9.0,<0.14.0",
+
+    # mqtt-sniffer
+    "colorama",
+    "pyyaml",
+
+    # network
+    "paho-mqtt >=1.5.1,<2.0.0",
+    "requests >=2.25.1,<3.0.0",
+
+    # notebook tools
+    "jupyter",
+    "nbstripout",
+
+    # nbconvert tools (researcher-only)
+    "jupyter_contrib_nbextensions",
+    "pathvalidate",
+]
+
+[project.optional-dependencies]
+all = [
+    "fedbiomed[gui,network,unet,tests,doc-test]"
+]
+gui = [
+    "cachelib ==0.7.0",
+    "flask >= 2.0.0,<2.0.2",
+    "jsonschema >=4.2.0,< 4.2.1",
+    "Flask-JWT-Extended ==4.4.2",
+    # "PyJWT == 2.4.0",
+]
+network = [
+    "django ==3.1.7",
+    "djangorestframework ==3.12.2",
+    "django-cleanup",
+    "gunicorn",
+]
+unet = [
+    "unet ==0.7.7",
+]
+tests = [
+    "pytest >6.2.2",
+    "pytest-coverage",
+]
+doc-test = [
+    "cython ==0.29.14",
+    "mkdocs >=1.1.2",
+    "mkdocs-gen-files ==0.3.4",
+    "mkdocs-literate-nav ==0.4.1",
+    "mkdocs-material ==6.1.0",
+    "mkdocs-section-index ==0.3.4",
+    "mkdocstrings-python ==0.6.6",
+]
+
+[project.urls]
+source = "https://gitlab.inria.fr/fedbiomed/fedbiomed"
+documentation = "https://fedbiomed.gitlabpages.inria.fr"
+
+[tool.setuptools]
+packages = ["fedbiomed"]
+
+[tool.setuptools.package-data]
+fedbiomed = ["py.typed"]

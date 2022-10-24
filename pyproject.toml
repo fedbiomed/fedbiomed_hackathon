@@ -13,30 +13,21 @@ description = "Fed-BioMed - federated learning tools for biomedical research"
 readme = "README.md"
 requires-python = ">=3.9,<3.10"
 license = {file = "LICENSE.md"}
-authors = [  # FIXME: decide on an authors' mentioning + ordering policy
-    {name = "Marc Vesin", email = "marc.vesin@inria.fr"},
-    {name = "Sergen Cansiz", email = "sergen.cansiz@inria.fr"},
-    {name = "Jean Luc Szpyrka", email = "jean-luc.szpyrka@inria.fr"},
-    {name = "Yannick Bouillard", email = "yannick.bouillard@inria.fr"},
-    {name = "Francesco Cremonesi", email = "francesco.cremonesi@inria.fr"},
-    {name = "Marco Lorenzi", email = "marco.lorenzi@inria.fr"},
-    {name = "Irene Balelli", email = "irene.balleli@inria.fr"},
-    {name = "Paul Andrey", email = "paul.andrey@inria.fr"},
-    {name = "Erwan Demairy", email = "erwan.demairy@inria.fr"},
+authors = [
+    {name = "Fed-BioMed Team", email = "fedbiomed-support@inria.fr"},
 ]
 maintainers = [
-    {name = "Marc Vesin", email = "marc.vesin@inria.fr"},
-    {name = "Sergen Cansiz", email = "sergen.cansiz@inria.fr"},
-    {name = "Yannick Bouillard", email = "yannick.bouillard@inria.fr"},
-    {name = "Francesco Cremonesi", email = "francesco.cremonesi@inria.fr"},
+    {name = "Fed-BioMed Team", email = "fedbiomed-support@inria.fr"},
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Healthcare Industry",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
-    # TODO: add "Operation System ::" classifiers
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Mathematics",
     "Typing :: Typed",

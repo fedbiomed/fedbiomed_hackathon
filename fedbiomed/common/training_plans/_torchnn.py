@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Tuple, Optional, OrderedDict, Union, Iterato
 
 import numpy as np
 import torch
+from declearn.model.torch import TorchVector
+from declearn.optimizer import Optimizer
 from torch import nn
 
 from fedbiomed.common.constants import ErrorNumbers, TrainingPlans
@@ -22,6 +24,47 @@ from fedbiomed.common.training_plans._training_iterations import MiniBatchTraini
 from fedbiomed.common.training_plans._base_training_plan import BaseTrainingPlan
 
 ModelInputType = Union[torch.Tensor, Dict, List, Tuple]
+
+
+class _TorchModel:
+    """declearn Model-like class providing with Optimizer compatibility.
+
+    This class is a minimal mimic of `declearn.model.torch.TorchModel`
+    that provides with the methods required to be feedable as `model`
+    to `declearn.optimizer.Optimizer.apply_gradients`.
+
+    It also provides with a method to collect the gradients attached
+    to a `torch.nn.Module` after a forward and backward passes have
+    been taken.
+    """
+
+    def __init__(self, module: torch.nn.Module) -> None:
+        """Instantiate the wrapper over a torch Module instance."""
+        self.model = module
+
+    def get_attached_gradients(self) -> TorchVector:
+        """Return a TorchVector wrapping the gradients attached to the model."""
+        gradients = {
+            name: param.grad.detach()
+            for name, param in self.model.named_parameters()
+            if param.requires_grad
+        }
+        return TorchVector(gradients)
+
+    def get_weights(self) -> TorchVector:
+        """Return a TorchVector wrapping the model's parameters."""
+        parameters = {
+            name: param.detach()
+            for name, param in self.model.named_parameters()
+        }
+        return TorchVector(parameters)
+
+    def apply_updates(self, updates: TorchVector) -> None:
+        """Apply incoming updates to the wrapped model's parameters."""
+        with torch.no_grad():
+            for name, update in updates.coefs.items():
+                param = self.model.get_parameter(name)
+                param.add_(update)
 
 
 class TorchTrainingPlan(BaseTrainingPlan, ABC):
@@ -205,11 +248,14 @@ class TorchTrainingPlan(BaseTrainingPlan, ABC):
         if self._optimizer is None:
             raise FedbiomedTrainingPlanError(f"{ErrorNumbers.FB605.value}: Optimizer not found, please call "
                                              f"`init_optimizer beforehand")
-        learning_rates = []
-        params = self._optimizer.param_groups
-        for param in params:
-            learning_rates.append(param['lr'])
-        return learning_rates
+        if isinstance(self._optimizer, torch.optim.Optimizer):
+            learning_rates = []
+            params = self._optimizer.param_groups
+            for param in params:
+                learning_rates.append(param['lr'])
+            return learning_rates
+        else:
+            return [self._optimizer.lrate]
 
     def update_optimizer_args(self) -> Dict:
         """
@@ -256,15 +302,39 @@ class TorchTrainingPlan(BaseTrainingPlan, ABC):
         """
         return self._init_params
 
-    def init_optimizer(self):
-        """Abstract method for declaring optimizer by default """
-        try:
-            self._optimizer = torch.optim.Adam(self._model.parameters(), **self._optimizer_args)
-        except AttributeError as e:
-            raise FedbiomedTrainingPlanError(f"{ErrorNumbers.FB605.value}: Invalid argument for default "
-                                             f"optimizer Adam. Error: {e}")
+    def init_optimizer(
+            self,
+        ) -> Union[Optimizer, torch.optim.Optimizer]:
+        """Build and return an Optimizer to be used for training.
 
-        return self._optimizer
+        !!! info "Note"
+            - For `TorchTrainingPlan`, this method may either return a
+            `declearn.optimizer.Optimizer` or a `torch.optim.Optimizer`
+            instance.
+            - By default, this method sets up an Adam optimizer, passing
+            it the hyper-parameters retrieved from `optimizer_args`.
+            - End-users may however override this method so as to use any
+            other kind of optimizer to be used and/or control how to parse
+            input arguments, that may therefore be set and/or restricted
+            arbitrarily as part of the shared (node-reviewed) TrainingPlan
+            source python code.
+
+        Returns:
+            optim: the Optimizer object to use for training.
+        """
+        try:
+            optim_args = self.optimizer_args()
+            return torch.optim.Adam(self.model().parameters(), **optim_args)
+            # Alternative code to use the equivalent declearn-provided Adam:
+            # return Optimizer(
+            #     lrate=optim_args.pop("lrate", optim_args.pop("lr", 0.001)),
+            #     modules=[("adam", optim_args)],
+            # )
+        except Exception as exc:
+            raise FedbiomedTrainingPlanError(
+                f"{ErrorNumbers.FB605.value}: Failed to initialize the "
+                f"Optimizer: {exc}"
+            )
 
     def type(self) -> TrainingPlans.TorchTrainingPlan:
         """ Gets training plan type"""
@@ -312,8 +382,11 @@ class TorchTrainingPlan(BaseTrainingPlan, ABC):
                                                                  alternative="self.optimizer_args()"))
 
         # Validate optimizer
-        if not isinstance(self._optimizer, torch.optim.Optimizer):
-            raise FedbiomedTrainingPlanError(f"{ErrorNumbers.FB605.value}: Optimizer should torch base optimizer.")
+        if not isinstance(self._optimizer, (torch.optim.Optimizer, Optimizer)):
+            raise FedbiomedTrainingPlanError(
+                f"{ErrorNumbers.FB605.value}: Optimizer should be a declearn "
+                "or torch Optimizer instance."
+            )
 
     def _set_device(self, use_gpu: Union[bool, None], node_args: dict):
         """Set device (CPU, GPU) that will be used for training, based on `node_args`
@@ -514,7 +587,6 @@ class TorchTrainingPlan(BaseTrainingPlan, ABC):
             corrected loss: the loss value used for backward propagation, including any correction terms
             loss: the uncorrected loss for reporting
         """
-        # zero-out gradients
         self._optimizer.zero_grad()
 
         # compute loss
@@ -536,9 +608,29 @@ class TorchTrainingPlan(BaseTrainingPlan, ABC):
                     param.grad.add_(correction.to(param.grad.device))
 
         # Have the optimizer collect, refine and apply gradients
-        self._optimizer.step()
+        if isinstance(self._optimizer, torch.optim.Optimizer):
+            self._optimizer.step()
+        else:
+            self._declearn_optimizer_step()
 
         return corrected_loss, loss
+
+    def _declearn_optimizer_step(self):
+        """Backend to taking an optimization step using declearn.
+
+        This method replaces a `torch.optim.Optimizer.step()` call
+        with a mix of pytorch-specific code and generic declearn
+        optimizer instructions. It should be called under the same
+        context as a Torch optimizer step, i.e. after the gradients
+        attached to the wrapped model's parameters have been set by
+        a forward/backward pass over a batch of training samples.
+        """
+        # Wrap up the model in a declearn Model-like structure.
+        model = _TorchModel(self._model)
+        # Collect pre-computed gradients wrt model parameters.
+        gradients = model.get_attached_gradients()
+        # Compute model updates and apply them (affecting the torch Module).
+        self._optimizer.apply_gradients(model, gradients)
 
     def testing_routine(
             self,

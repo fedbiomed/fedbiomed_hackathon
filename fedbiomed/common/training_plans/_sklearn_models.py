@@ -13,6 +13,9 @@ from io import StringIO
 from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
+from declearn.model.sklearn import NumpyVector
+from declearn.optimizer import Optimizer
+from sklearn.base import BaseEstimator
 from sklearn.linear_model import SGDClassifier, SGDRegressor
 
 from fedbiomed.common.constants import ErrorNumbers
@@ -28,6 +31,34 @@ __all__ = [
     "FedSGDClassifier",
     "FedSGDRegressor",
 ]
+
+
+class _SklearnModel:
+    """declearn Model-like class providing with Optimizer compatibility.
+
+    This class is a minimal mimic of `declearn.model.sklearn.SklearnSGDModel`
+    that provides with the methods required to be feedable as `model` to
+    `declearn.optimizer.Optimizer.apply_gradients`.
+    """
+
+    def __init__(
+        self,
+        model: BaseEstimator,
+        param_list: List[str],
+    ) -> None:
+        """Instantiate the wrapper over a scikit-learn BaseEstimator."""
+        self.model = model
+        self.param_list = param_list
+
+    def get_weights(self) -> NumpyVector:
+        """Return a NumpyVector wrapping the model's parameters."""
+        weights = {key: getattr(self.model, key) for key in self.param_list}
+        return NumpyVector(weights)
+
+    def apply_updates(self, updates: NumpyVector) -> None:
+        """Apply incoming updates to the wrapped model's parameters."""
+        for key, val in updates.coefs.items():
+            setattr(self.model, key, val)
 
 
 @contextmanager
@@ -164,9 +195,13 @@ class SKLearnTrainingPlanPartialFit(SKLearnTrainingPlan, metaclass=ABCMeta):
                 setattr(self._model, key, param[key])
             self._model.n_iter_ -= 1
         # Compute the batch-averaged updated weights and apply them.
-        # Update the `param` values, and reset gradients to zero.
-        for key in self._param_list:
-            setattr(self._model, key, grads[key] / b_len)
+        if isinstance(self._optim, Optimizer):
+            gradients = NumpyVector(grads) / b_len * self._get_raw_lrate()
+            model = _SklearnModel(self._model, self._param_list)
+            self._optim.apply_gradients(model, gradients)
+        else:
+            for key in self._param_list:
+                setattr(self._model, key, grads[key] / b_len)
         self._model.n_iter_ += 1
         # Optionally report the training loss over this batch.
         if report:
@@ -180,6 +215,10 @@ class SKLearnTrainingPlanPartialFit(SKLearnTrainingPlan, metaclass=ABCMeta):
                 logger.error(msg)
         # Otherwise, return nan as a fill-in value.
         return float('nan')
+
+    @abstractmethod
+    def _get_raw_lrate(self) -> float:
+        """Return the learning rate of the wrapped sklearn model, or 1.0."""
 
     def _parse_batch_loss(
             self,
@@ -230,6 +269,28 @@ class FedSGDRegressor(SKLearnTrainingPlanPartialFit):
         super().__init__()
         self._is_regression = True
 
+    def post_init(
+            self,
+            model_args: Dict[str, Any],
+            training_args: TrainingArgs,
+            aggregator_args: Optional[Dict[str, Any]] = None,
+        ) -> None:
+        # Call the parent class.
+        super().post_init(model_args, training_args, aggregator_args)
+        # When using a declearn optimizer, force the model's internal one
+        # to use a constant arbitrary learning rate.
+        if self._optim is not None:
+            self._model.eta0 = 0.1
+            self._model.learning_rate = "constant"
+
+    def _get_raw_lrate(self) -> float:
+        if self._model.learning_rate != "constant":
+            logger.warning(
+                "Accessing the raw learning-rate of a SGDRegressor with "
+                "non-constant learning rate. This is unexpected, and wrong."
+            )
+        return self._model.eta0
+
     def set_init_params(self) -> None:
         """Initialize the model's trainable parameters."""
         init_params = {
@@ -239,9 +300,6 @@ class FedSGDRegressor(SKLearnTrainingPlanPartialFit):
         self._param_list = list(init_params.keys())
         for key, val in init_params.items():
             setattr(self._model, key, val)
-
-    def get_learning_rate(self) -> List[float]:
-        return self._model.eta0
 
 
 class FedSGDClassifier(SKLearnTrainingPlanPartialFit):
@@ -257,6 +315,28 @@ class FedSGDClassifier(SKLearnTrainingPlanPartialFit):
         """Initialize the sklearn SGDClassifier training plan."""
         super().__init__()
         self._is_classification = True
+
+    def post_init(
+            self,
+            model_args: Dict[str, Any],
+            training_args: TrainingArgs,
+            aggregator_args: Optional[Dict[str, Any]] = None,
+        ) -> None:
+        # Call the parent class.
+        super().post_init(model_args, training_args, aggregator_args)
+        # When using a declearn optimizer, force the model's internal one
+        # to use a constant arbitrary learning rate.
+        if self._optim is not None:
+            self._model.eta0 = 0.1
+            self._model.learning_rate = "constant"
+
+    def _get_raw_lrate(self) -> float:
+        if self._model.learning_rate != "constant":
+            logger.warning(
+                "Accessing the raw learning-rate of a SGDClassifier with "
+                "non-constant learning rate. This is unexpected, and wrong."
+            )
+        return self._model.eta0
 
     def set_init_params(self) -> None:
         """Initialize the model's trainable parameters."""
@@ -279,9 +359,6 @@ class FedSGDClassifier(SKLearnTrainingPlanPartialFit):
         # Also initialize the "classes_" slot with unique predictable labels.
         # FIXME: this assumes target values are integers in range(n_classes).
         setattr(self._model, "classes_", np.arange(n_classes))
-
-    def get_learning_rate(self) -> List[float]:
-        return self._model.eta0
 
     def _parse_batch_loss(
             self,

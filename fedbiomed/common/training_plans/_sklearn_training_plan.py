@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import joblib
 import numpy as np
+from declearn.optimizer import Optimizer
 from sklearn.base import BaseEstimator
 from torch.utils.data import DataLoader
 
@@ -56,6 +57,7 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
         self._training_args = {}  # type: Dict[str, Any]
         self._aggregator_args = {}  # type: Dict[str, Any]
         self._param_list = []  # type: List[str]
+        self._optim = None  # type: Optional[Optimizer]
         self.__type = TrainingPlans.SkLearnTrainingPlan
         self._is_classification = False
         self._batch_maxnum = 0
@@ -100,10 +102,44 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
         self._model.set_params(**params)
         # Set up additional parameters (normally created by `self._model.fit`).
         self.set_init_params()
+        # Set up the (optional) optimizer.
+        self._optim = self.init_optimizer()
 
     @abstractmethod
     def set_init_params(self) -> None:
         """Initialize the model's trainable parameters."""
+
+    def init_optimizer(
+            self,
+        ) -> Optional[Optimizer]:
+        """Build and return an Optimizer to be used for training.
+
+        !!! info "Note"
+            - By default, this method calls `optimizer_args` and wraps
+            the results using a `declearn.optimizer.Optimizer` (see its
+            docs for details on the syntax and expected arguments).
+            - In the absence of optimizer arguments, this returns None, so
+            that the scikit-learn-implemented optimizer is used rather than
+            a declearn one. This may be deprecated in the future.
+            - End-users may however override this method so as to hard-code
+            the kind of optimizer to be used and/or control how to parse
+            input arguments, that may therefore be set and/or restricted
+            arbitrarily as part of the shared (node-reviewed) TrainingPlan
+            source python code.
+
+        Returns:
+            optim: the (optional) Optimizer object to use for training.
+        """
+        optim_args = self.optimizer_args()
+        if not optim_args:
+            return None
+        try:
+            return Optimizer(**optim_args)
+        except Exception as exc:
+            raise FedbiomedTrainingPlanError(
+                f"{ErrorNumbers.FB605.value}: Failed to initialize the "
+                f"Optimizer from optimizer_args: {exc}"
+            )
 
     def set_data_loaders(
             self,
@@ -145,14 +181,19 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
         """
         return self._training_args
 
-    def get_learning_rate(self, lr_key: str = 'eta0') -> List[float]:
-        lr = self._model_args.get(lr_key)
-        if lr is None:
-            # get the default value
-            lr = self._model.__dict__.get(lr_key)
-        if lr is None:
-            raise FedbiomedTrainingPlanError("Cannot retrieve learning rate. As a quick fix, specify it in the Model_args")
-        return [lr]
+    def get_learning_rate(self) -> List[float]:
+        # Case when using the optimizer internal to the wrapped model.
+        if self._optim is None:
+            lr = self._model_args.get("eta0")
+            if lr is None:
+                lr = self._model.__dict__.get("eta0")
+            if lr is None:
+                raise FedbiomedTrainingPlanError(
+                    "Cannot retrieve learning rate. As a quick fix, specify it in the Model_args"
+                )
+            return [lr]
+        # Case when using a declearn Optimizer.
+        return [self._optim.lrate]
 
     def model(self) -> BaseEstimator:
         """Retrieve the wrapped scikit-learn model instance.

@@ -130,16 +130,9 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
         Returns:
             optim: the (optional) Optimizer object to use for training.
         """
-        optim_args = self.optimizer_args()
-        if not optim_args:
+        if not self.optimizer_args():
             return None
-        try:
-            return Optimizer(**optim_args)
-        except Exception as exc:
-            raise FedbiomedTrainingPlanError(
-                f"{ErrorNumbers.FB605.value}: Failed to initialize the "
-                f"Optimizer from optimizer_args: {exc}"
-            )
+        return super().init_optimizer()
 
     def set_data_loaders(
             self,

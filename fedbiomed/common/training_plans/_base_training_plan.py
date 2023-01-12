@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+from declearn.optimizer import Optimizer
 from torch.utils.data import DataLoader
 
 from fedbiomed.common import utils
@@ -131,6 +132,33 @@ class BaseTrainingPlan(metaclass=ABCMeta):
             raise FedbiomedTrainingPlanError(f"{ErrorNumbers.FB605}: Expected dependencies are l"
                                              f"ist or tuple, but got {type(dependencies)}")
         self.add_dependency(dependencies)
+
+    def init_optimizer(
+            self,
+        ) -> Optimizer:
+        """Build and return an Optimizer to be used for training.
+
+        !!! info "Note"
+            - By default, this method calls `optimizer_args` and wraps
+            the results using a `declearn.optimizer.Optimizer` (see its
+            docs for details on the syntax and expected arguments).
+            - End-users may however override this method so as to hard-code
+            the kind of optimizer to be used and/or control how to parse
+            input arguments, that may therefore be set and/or restricted
+            arbitrarily as part of the shared (node-reviewed) TrainingPlan
+            source python code.
+
+        Returns:
+            optim: the Optimizer object to use for training.
+        """
+        try:
+            optim_args = self.optimizer_args()
+            return Optimizer(**optim_args)
+        except Exception as exc:
+            raise FedbiomedTrainingPlanError(
+                f"{ErrorNumbers.FB605.value}: Failed to initialize the "
+                f"Optimizer: {exc}"
+            )
 
     def save_code(self, filepath: str) -> None:
         """Saves the class source/codes of the training plan class that is created byuser.

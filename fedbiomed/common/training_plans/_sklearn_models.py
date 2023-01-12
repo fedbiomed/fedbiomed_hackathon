@@ -18,6 +18,7 @@ from sklearn.linear_model import SGDClassifier, SGDRegressor
 from fedbiomed.common.constants import ErrorNumbers
 from fedbiomed.common.exceptions import FedbiomedTrainingPlanError
 from fedbiomed.common.logger import logger
+from fedbiomed.common.training_args import TrainingArgs
 from fedbiomed.common.training_plans import SKLearnTrainingPlan
 from fedbiomed.common.training_plans._training_iterations import MiniBatchTrainingIterationsAccountant
 
@@ -324,8 +325,8 @@ class FedPerceptron(FedSGDClassifier):
     def post_init(
             self,
             model_args: Dict[str, Any],
-            training_args: Dict[str, Any],
+            training_args: TrainingArgs,
             aggregator_args: Optional[Dict[str, Any]] = None,
         ) -> None:
         model_args["loss"] = "perceptron"
-        super().post_init(model_args, training_args)
+        super().post_init(model_args, training_args, aggregator_args)

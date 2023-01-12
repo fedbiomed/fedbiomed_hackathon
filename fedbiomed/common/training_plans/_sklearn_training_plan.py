@@ -20,6 +20,7 @@ from fedbiomed.common.data import NPDataLoader
 from fedbiomed.common.exceptions import FedbiomedTrainingPlanError
 from fedbiomed.common.logger import logger
 from fedbiomed.common.metrics import MetricTypes
+from fedbiomed.common.training_args import TrainingArgs
 
 from ._base_training_plan import BaseTrainingPlan
 
@@ -53,6 +54,7 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
         self._model = self._model_cls()
         self._model_args = {}  # type: Dict[str, Any]
         self._training_args = {}  # type: Dict[str, Any]
+        self._aggregator_args = {}  # type: Dict[str, Any]
         self._param_list = []  # type: List[str]
         self.__type = TrainingPlans.SkLearnTrainingPlan
         self._is_classification = False
@@ -70,7 +72,7 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
     def post_init(
             self,
             model_args: Dict[str, Any],
-            training_args: Dict[str, Any],
+            training_args: TrainingArgs,
             aggregator_args: Optional[Dict[str, Any]] = None,
         ) -> None:
         """Process model, training and optimizer arguments.

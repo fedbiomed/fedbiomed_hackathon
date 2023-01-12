@@ -4,12 +4,10 @@
 """TrainingPlan definition for the pytorch deep learning framework."""
 
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from typing import Any, Dict, List, Tuple, Optional, OrderedDict, Union, Iterator
 
-from copy import deepcopy
-
 import numpy as np
-from fedbiomed.common.training_args import TrainingArgs
 import torch
 from torch import nn
 
@@ -18,6 +16,7 @@ from fedbiomed.common.exceptions import FedbiomedTrainingPlanError
 from fedbiomed.common.logger import logger
 from fedbiomed.common.metrics import MetricTypes
 from fedbiomed.common.privacy import DPController
+from fedbiomed.common.training_args import TrainingArgs
 from fedbiomed.common.utils import get_method_spec
 from fedbiomed.common.training_plans._training_iterations import MiniBatchTrainingIterationsAccountant
 from fedbiomed.common.training_plans._base_training_plan import BaseTrainingPlan
@@ -70,6 +69,7 @@ class TorchTrainingPlan(BaseTrainingPlan, ABC):
         self._training_args = None
         self._model_args = None
         self._optimizer_args = None
+        self._aggregator_args = {}
         self._use_gpu = False
 
         self._batch_maxnum = 100
@@ -162,7 +162,11 @@ class TorchTrainingPlan(BaseTrainingPlan, ABC):
         pass
 
     @abstractmethod
-    def training_step(self):
+    def training_step(
+            self,
+            data: ModelInputType,
+            target: Optional[ModelInputType] = None,
+        ) -> torch.Tensor:
         """Abstract method, all subclasses must provide a training_step.
         """
         pass
@@ -686,4 +690,3 @@ class TorchTrainingPlan(BaseTrainingPlan, ABC):
         for current_model, init_model in zip(self._model.parameters(), self._init_params):
             norm += ((current_model - init_model) ** 2).sum()
         return norm
-

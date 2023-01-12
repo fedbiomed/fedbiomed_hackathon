@@ -9,17 +9,15 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-
-from collections import OrderedDict
-
 from torch.utils.data import DataLoader
 
 from fedbiomed.common import utils
 from fedbiomed.common.constants import ErrorNumbers, ProcessTypes
 from fedbiomed.common.data import NPDataLoader
-from fedbiomed.common.exceptions import FedbiomedError, FedbiomedTrainingPlanError, FedbiomedUserInputError
+from fedbiomed.common.exceptions import FedbiomedError, FedbiomedTrainingPlanError
 from fedbiomed.common.logger import logger
 from fedbiomed.common.metrics import Metrics, MetricTypes
+from fedbiomed.common.training_args import TrainingArgs
 from fedbiomed.common.utils import get_class_source
 from fedbiomed.common.utils import get_method_spec
 
@@ -61,7 +59,7 @@ class BaseTrainingPlan(metaclass=ABCMeta):
     def post_init(
             self,
             model_args: Dict[str, Any],
-            training_args: Dict[str, Any],
+            training_args: TrainingArgs,
             aggregator_args: Optional[Dict[str, Any]] = None,
         ) -> None:
         """Process model, training and optimizer arguments.
@@ -529,9 +527,3 @@ class BaseTrainingPlan(metaclass=ABCMeta):
             # case `data` is a torch.Tensor or a np.ndarray
             batch_size = len(data)
             return batch_size
-
-
-
-
-
-

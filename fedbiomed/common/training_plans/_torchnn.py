@@ -587,7 +587,10 @@ class TorchTrainingPlan(BaseTrainingPlan, ABC):
             corrected loss: the loss value used for backward propagation, including any correction terms
             loss: the uncorrected loss for reporting
         """
-        self._optimizer.zero_grad()
+        if isinstance(self._optimizer, torch.optim.Optimizer):
+            self._optimizer.zero_grad()
+        else:
+            self._model.zero_grad()
 
         # compute loss
         loss = self.training_step(data, target)  # raises an exception if not provided

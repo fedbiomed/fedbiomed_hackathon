@@ -196,8 +196,9 @@ class SKLearnTrainingPlanPartialFit(SKLearnTrainingPlan, metaclass=ABCMeta):
             self._model.n_iter_ -= 1
         # Compute the batch-averaged updated weights and apply them.
         if isinstance(self._optim, Optimizer):
-            gradients = NumpyVector(grads) / b_len * self._get_raw_lrate()
             model = _SklearnModel(self._model, self._param_list)
+            adjust = b_len * self._get_raw_lrate()
+            gradients = (model.get_weights() - NumpyVector(grads)) / adjust
             self._optim.apply_gradients(model, gradients)
         else:
             for key in self._param_list:

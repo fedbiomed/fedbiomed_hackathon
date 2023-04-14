@@ -8,11 +8,9 @@ from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional, TypedDict, Union
 
 import numpy as np
-from fedbiomed.common.optimizers.generic_optimizers import BaseOptimizer
 import torch
 from torch.utils.data import DataLoader
 
-from fedbiomed.common import utils
 from fedbiomed.common.constants import ErrorNumbers, ProcessTypes
 from fedbiomed.common.data import NPDataLoader
 from fedbiomed.common.exceptions import (
@@ -20,9 +18,10 @@ from fedbiomed.common.exceptions import (
 )
 from fedbiomed.common.logger import logger
 from fedbiomed.common.metrics import Metrics, MetricTypes
-from fedbiomed.common.models import Model
-from fedbiomed.common.utils import get_class_source
-from fedbiomed.common.utils import get_method_spec
+from fedbiomed.common.models import Model, SkLearnModel
+from fedbiomed.common.optimizers.model_optim import ModelOptimizer
+from fedbiomed.common.training_args import TrainingArgs
+from fedbiomed.common import utils
 
 
 class PreProcessDict(TypedDict):
@@ -55,8 +54,10 @@ class BaseTrainingPlan(metaclass=ABCMeta):
         testing_data_loader: Data loader used in the validation routine.
     """
 
-    _model: Model
-    _optimizer: BaseOptimizer
+    # Type annotations for post-init private instance attributes.
+    _model: Union[Model, SkLearnModel]
+    _optimizer: ModelOptimizer
+
     def __init__(self) -> None:
         """Construct the base training plan."""
         self._dependencies: List[str] = []
@@ -69,7 +70,7 @@ class BaseTrainingPlan(metaclass=ABCMeta):
     def post_init(
             self,
             model_args: Dict[str, Any],
-            training_args: Dict[str, Any],
+            training_args: TrainingArgs,
             aggregator_args: Optional[Dict[str, Any]] = None,
         ) -> None:
         """Process model, training and optimizer arguments.
@@ -129,8 +130,8 @@ class BaseTrainingPlan(metaclass=ABCMeta):
         return []
 
     def _configure_dependencies(self) -> None:
-        """ Configures dependencies """
-        init_dep_spec = get_method_spec(self.init_dependencies)
+        """Configures dependencies."""
+        init_dep_spec = utils.get_method_spec(self.init_dependencies)
         if len(init_dep_spec.keys()) > 0:
             raise FedbiomedTrainingPlanError(
                 f"{ErrorNumbers.FB605}: `init_dependencies` should not take any argument. "
@@ -155,7 +156,7 @@ class BaseTrainingPlan(metaclass=ABCMeta):
             FedbiomedTrainingPlanError: raised when model file cannot be created/opened/edited
         """
         try:
-            class_source = get_class_source(self.__class__)
+            class_source = utils.get_class_source(self.__class__)
         except FedbiomedError as exc:
             msg = f"{ErrorNumbers.FB605.value}: error while getting source of the model class: {exc}"
             logger.critical(msg)
@@ -216,18 +217,17 @@ class BaseTrainingPlan(metaclass=ABCMeta):
             params: model weights, as a dictionary mapping parameters' names
                 to their value.
         """
-        return self._model.set_weights(params)
+        self._model.set_weights(params)
 
     def set_aggregator_args(self, aggregator_args: Dict[str, Any]):
         raise FedbiomedTrainingPlanError("method not implemented and needed")
 
-    def init_optimizer(self):
+    def init_optimizer(self) -> Any:
         """Abstract method for declaring optimizer by default """
         raise FedbiomedTrainingPlanError("method not implemented")
 
-    def optimizer_args(self) -> Dict:
-        """Retrieves optimizer arguments (to be overridden
-        by children classes)
+    def optimizer_args(self) -> Dict[str, Any]:
+        """Retrieve optimizer arguments (to be overridden by children classes).
 
         Returns:
             Empty dictionary: (to be overridden in children classes)
@@ -410,7 +410,6 @@ class BaseTrainingPlan(metaclass=ABCMeta):
                 These arguments can specify GPU use; however, this is not
                 supported for scikit-learn models and thus will be ignored.
         """
-        return None
 
     def testing_routine(
             self,

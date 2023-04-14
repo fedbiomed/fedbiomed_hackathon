@@ -7,7 +7,7 @@
 
 import functools
 from abc import ABCMeta
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 import numpy as np
 from sklearn.linear_model import SGDClassifier, SGDRegressor, Perceptron
@@ -15,8 +15,11 @@ from sklearn.linear_model import SGDClassifier, SGDRegressor, Perceptron
 from fedbiomed.common.constants import ErrorNumbers
 from fedbiomed.common.exceptions import FedbiomedTrainingPlanError
 from fedbiomed.common.logger import logger
+from fedbiomed.common.training_args import TrainingArgs
 from fedbiomed.common.training_plans import SKLearnTrainingPlan
-from fedbiomed.common.training_plans._training_iterations import MiniBatchTrainingIterationsAccountant
+from fedbiomed.common.training_plans._training_iterations import (
+    MiniBatchTrainingIterationsAccountant
+)
 
 
 __all__ = [
@@ -49,15 +52,13 @@ class SKLearnTrainingPlanPartialFit(SKLearnTrainingPlan, metaclass=ABCMeta):
                 instance, recording the loss value during training.
 
         Returns:
-            number of data processed during training. This should be sent to Node,
-            in order to weight accordingly the participation of each Node, in the
-            [Strategy][fedbiomed.researcher.strategies.strategy.Strategies] (for
-            instance, [FedAverage][fedbiomed.researcher.aggregators.fedavg.FedAverage] needs this piece of information
-            before aggregating model parameters).
+            Number of data processed during training. This should be sent back
+            to the reasearcher, for instance to weight the nodes' updates based
+            on their relative contributions as part of the FedAvg aggregation.
         """
-        # set number of training loop iterations
+        # Set the number of training steps to perform.
         iterations_accountant = MiniBatchTrainingIterationsAccountant(self)
-        # Gather reporting parameters.
+        # Optionally set up a func and arguments to report the training loss.
         report = False
         if (history_monitor is not None) and hasattr(self.model(), "verbose"):
             report = True
@@ -67,49 +68,36 @@ class SKLearnTrainingPlanPartialFit(SKLearnTrainingPlan, metaclass=ABCMeta):
                 history_monitor.add_scalar,
                 train=True,
             )
-            verbose = self._model.get_params("verbose")  # force verbose = 1 to print losses
+            # force verbose = 1 to print losses
+            verbose = self._model.get_params("verbose")
             self._model.set_params(verbose=1)
+        # Run pre-training optimizer operations.
+        self._optimizer.enter_training()
         # Iterate over epochs.
-        with self._optimizer.optimizer_processing():
-            for epoch in iterations_accountant.iterate_epochs():
-                training_data_iter: Iterator = iter(self.training_data_loader)
-                # Iterate over data batches.
-                for batch in iterations_accountant.iterate_batches():
-                    inputs, target = next(training_data_iter)
-                    batch_size = self._infer_batch_size(inputs)
-                    iterations_accountant.increment_sample_counters(batch_size)
-                    loss = self._train_over_batch(inputs, target, report)
-                    # Optionally report on the batch training loss.
-                    if report and not np.isnan(loss) and iterations_accountant.should_log_this_batch():
-                        # Retrieve reporting information: semantics differ whether num_updates or epochs were specified
-                        num_samples, num_samples_max = iterations_accountant.reporting_on_num_samples()
-                        num_iter, num_iter_max = iterations_accountant.reporting_on_num_iter()
-                        epoch_to_report = iterations_accountant.reporting_on_epoch()
-
-                        logger.debug('Train {}| '
-                                    'Iteration {}/{} | '
-                                    'Samples {}/{} ({:.0f}%)\tLoss: {:.6f}'.format(
-                                        f'Epoch: {epoch_to_report} ' if epoch_to_report is not None else '',
-                                        num_iter,
-                                        num_iter_max,
-                                        num_samples,
-                                        num_samples_max,
-                                        100. * num_iter / num_iter_max,
-                                        loss))
-
-                        record_loss(
-                            metric={loss_name: loss},
-                            iteration=num_iter,
-                            epoch=epoch_to_report,
-                            num_samples_trained=num_samples,
-                            num_batches=num_iter_max,
-                            total_samples=num_samples_max,
-                            batch_samples=batch_size
-                        )
+        for _ in iterations_accountant.iterate_epochs():
+            training_data_iter: Iterator = iter(self.training_data_loader)
+            # Iterate over data batches.
+            for _ in iterations_accountant.iterate_batches():
+                # Gather the data batch and keep track of iterations.
+                inputs, target = next(training_data_iter)
+                batch_size = self._infer_batch_size(inputs)
+                iterations_accountant.increment_sample_counters(batch_size)
+                # Run the training step.
+                loss = self._train_over_batch(inputs, target, report)
+                # Optionally report on the batch training loss.
+                if (
+                    report and not np.isnan(loss)
+                    and iterations_accountant.should_log_this_batch()
+                ):
+                    self._report_training_loss(
+                        loss, iterations_accountant, record_loss, loss_name, batch_size
+                    )
         # Reset model verbosity to its initial value.
         if report:
             self._model.set_params(verbose=verbose)
-
+        # Run post-training optimizer operations.
+        self._optimizer.exit_training()
+        # Return the total number of samples used during this round.
         return iterations_accountant.num_samples_observed_in_total
 
     def _train_over_batch(
@@ -131,15 +119,9 @@ class SKLearnTrainingPlanPartialFit(SKLearnTrainingPlan, metaclass=ABCMeta):
                 loss printed out to the console by the scikit-learn
                 model. If False, or if parsing fails, return a nan.
         """
-
-        # Gather start weights of the model and initialize zero gradients.
-
-        self._optimizer.init_training()
+        # Run a training step, and collect standard outputs.
         stdout = []  # type: List[List[str]]
-        
-        self._model.train(inputs, target, stdout=stdout)
-        self._optimizer.step()
-
+        self._optimizer.step(inputs, target, stdout=stdout if report else None)
         # Optionally report the training loss over this batch.
         if report:
             try:
@@ -156,8 +138,8 @@ class SKLearnTrainingPlanPartialFit(SKLearnTrainingPlan, metaclass=ABCMeta):
     def _parse_batch_loss(
             self,
             stdout: List[List[str]],
-            inputs: np.ndarray,
-            target: np.ndarray
+            inputs: np.ndarray,  # NOTE: these args are used by some children
+            target: np.ndarray,
         ) -> float:
         """Parse logged loss values from captured stdout lines.
 
@@ -167,7 +149,6 @@ class SKLearnTrainingPlanPartialFit(SKLearnTrainingPlan, metaclass=ABCMeta):
             inputs: Batched input features.
             target: Batched target labels.
         """
-        #import remote_pdb; remote_pdb.set_trace()
         values = [self._parse_sample_losses(sample) for sample in stdout]
         losses = np.array(values)
         return float(np.mean(losses))
@@ -188,6 +169,44 @@ class SKLearnTrainingPlanPartialFit(SKLearnTrainingPlan, metaclass=ABCMeta):
                 logger.error(f"Value error during monitoring: {exc}")
         return losses
 
+    @staticmethod
+    def _report_training_loss(
+        loss: float,
+        accountant: MiniBatchTrainingIterationsAccountant,
+        record_loss: Callable[..., None],
+        loss_name: str,
+        batch_size: int,
+    ) -> None:
+        """Backend method to log and report training loss.
+
+        This static method is merely a refactoring of code from the training
+        routine and should never be called in any other context.
+        """
+        # Retrieve reporting information.
+        # Semantics differ whether num_updates or epochs were specified.
+        num_samples, num_samples_max = accountant.reporting_on_num_samples()
+        num_iter, num_iter_max = accountant.reporting_on_num_iter()
+        epoch = accountant.reporting_on_epoch()
+        # Log the information.
+        info = (
+            "Train" + ("" if epoch is None else f" Epoch: {epoch}") + " | "
+            + f"Iteration {num_iter}/{num_iter_max} | "
+            + f"Samples  {num_samples}/{num_samples_max} "
+            + f"({100 * num_iter / num_iter_max:.0f}%)\t"
+            + f"Loss: {loss:.6f}"
+        )
+        logger.debug(info)
+        # Record it into the HistoryMonitor.
+        record_loss(
+            metric={loss_name: loss},
+            iteration=num_iter,
+            epoch=epoch,
+            num_samples_trained=num_samples,
+            num_batches=num_iter_max,
+            total_samples=num_samples_max,
+            batch_samples=batch_size,
+        )
+
 
 class FedSGDRegressor(SKLearnTrainingPlanPartialFit):
     """Fed-BioMed training plan for scikit-learn SGDRegressor models."""
@@ -198,10 +217,6 @@ class FedSGDRegressor(SKLearnTrainingPlanPartialFit):
         "from fedbiomed.common.training_plans import FedSGDRegressor"
     )
 
-    def __init__(self) -> None:
-        """Initialize the sklearn SGDRegressor training plan."""
-        super().__init__()
-
 
 class FedSGDClassifier(SKLearnTrainingPlanPartialFit):
     """Fed-BioMed training plan for scikit-learn SGDClassifier models."""
@@ -211,10 +226,6 @@ class FedSGDClassifier(SKLearnTrainingPlanPartialFit):
         "from sklearn.linear_model import SGDClassifier",
         "from fedbiomed.common.training_plans import FedSGDClassifier"
     )
-
-    def __init__(self) -> None:
-        """Initialize the sklearn SGDClassifier training plan."""
-        super().__init__()
 
     def _parse_batch_loss(
             self,
@@ -248,16 +259,12 @@ class FedPerceptron(FedSGDClassifier):
     _model_dep = (
         "from sklearn.linear_model import SGDClassifier",
         "from fedbiomed.common.training_plans import FedPerceptron"
-    )      
-
-    def __init__(self) -> None:
-        """Class constructor."""
-        super().__init__()
+    )
 
     def post_init(
             self,
             model_args: Dict[str, Any],
-            training_args: Dict[str, Any],
+            training_args: TrainingArgs,
             aggregator_args: Optional[Dict[str, Any]] = None,
         ) -> None:
         # get default values of Perceptron model (different from SGDClassifier model default values)

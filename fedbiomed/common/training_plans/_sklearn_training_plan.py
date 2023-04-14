@@ -8,23 +8,20 @@ Fed-BioMed training plans wrapping scikit-learn models.
 """
 
 from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, Optional, Tuple, Type, Union
+from typing import Any, ClassVar, Dict, Optional, Tuple, Type, Union
 
 import numpy as np
-from fedbiomed.common.optimizers.optimizer import Optimizer as FedOptimizer
-from fedbiomed.common.training_args import TrainingArgs
 from sklearn.base import BaseEstimator
 from torch.utils.data import DataLoader
-from declearn.optimizer import Optimizer as DeclearnOptimizer
 
 from fedbiomed.common.constants import ErrorNumbers, TrainingPlans
 from fedbiomed.common.data import NPDataLoader
 from fedbiomed.common.exceptions import FedbiomedTrainingPlanError
 from fedbiomed.common.logger import logger
 from fedbiomed.common.metrics import MetricTypes
-from fedbiomed.common.optimizers.generic_optimizers import BaseOptimizer, OptimizerBuilder, NativeSkLearnOptimizer
-from fedbiomed.common.utils import get_method_spec
 from fedbiomed.common.models import SkLearnModel
+from fedbiomed.common.optimizers import Optimizer, SklearnOptimizer
+from fedbiomed.common.training_args import TrainingArgs
 
 from ._base_training_plan import BaseTrainingPlan
 
@@ -54,18 +51,22 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
         outside of Fed-BioMed.
     """
 
-    _model_cls: Type[BaseEstimator]        # wrapped model class
-    _model_dep: Tuple[str, ...] = tuple()  # model-specific dependencies
+    # Class attributes (defined or overridden by children classes).
+    _model_cls: ClassVar[Type[BaseEstimator]]        # wrapped model class
+    _model_dep: ClassVar[Tuple[str, ...]] = tuple()  # model-specific dependencies
+
+    # Type annotations for post-init instance attributes.
+    _model: SkLearnModel
+    _aggregator_args: Dict[str, Any]
+    _optimizer_args: Dict[str, Any]
 
     def __init__(self) -> None:
         """Initialize the SKLearnTrainingPlan."""
         super().__init__()
-        self._model: Union[SkLearnModel, None] = None
         self._training_args = {}  # type: Dict[str, Any]
         self.__type = TrainingPlans.SkLearnTrainingPlan
         self._batch_maxnum = 0
         self.dataset_path: Optional[str] = None
-        self._optimizer: Optional[BaseOptimizer] = None
         self.add_dependency([
             "import inspect",
             "import numpy as np",
@@ -91,38 +92,28 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
             aggregator_args: Arguments managed by and shared with the
                 researcher-side aggregator.
         """
+        # Add model dependencies (to enable saving this plan's code).
+        self._configure_dependencies()
+        # Instantiate the wrapped scikit-learn model.
         self._model = SkLearnModel(self._model_cls)
-        model_args.setdefault("verbose", 1)
-        # FIXME: this method `model_args` of model seems not very useful (unless i am mistaken, i would be in favour of remove it)
-        self._model.model_args = model_args
+        # Parse input arguments.
         self._aggregator_args = aggregator_args or {}
-        
         self._optimizer_args = training_args.optimizer_arguments() or {}
         self._training_args = training_args.pure_training_arguments()
         self._batch_maxnum = self._training_args.get('batch_maxnum', self._batch_maxnum)
-
-        # Add dependencies
-        self._configure_dependencies()
         # Override default model parameters based on `self._model_args`.
+        model_args.setdefault("verbose", 1)
         params = {
             key: model_args.get(key, val)
             for key, val in self._model.get_params().items()
         }
-        
-        # configure optimizer (if provided in the TrainingPlan)
-        self._configure_optimizer()
-        
-        # FIXME: should we do that in `_configure_optimizer`
-        # from now on, `self._optimizer`` is not None
-        
-        
         self._model.set_params(**params)
-            
-        # Set up additional parameters (normally created by `self._model.fit`).
+        # Set up initial model weights (normally created by `self._model.fit`).
         self._model.set_init_params(model_args)
-        
-        # this is a second (an easier solution)
-        #self._optimizer.optimizer_post_processing(model_args)
+        # Get the optional Optimizer that users may have defined.
+        optimizer = self.init_optimizer()
+        # Wrap it and the model into a `SklearnOptimizer` instance.
+        self._optimizer = SklearnOptimizer(self._model, optimizer)
 
     def set_data_loaders(
             self,
@@ -164,15 +155,6 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
         """
         return self._training_args
 
-    # def get_learning_rate(self, lr_key: str = 'eta0') -> List[float]:
-    #     lr = self._model.model_args.get(lr_key)
-    #     if lr is None:
-    #         # get the default value
-    #         lr = self._model.__dict__.get(lr_key)
-    #     if lr is None:
-    #         raise FedbiomedTrainingPlanError("Cannot retrieve learning rate. As a quick fix, specify it in the Model_args")
-    #     return [lr]
-
     def model(self) -> Optional[BaseEstimator]:
         """Retrieve the wrapped scikit-learn model instance.
 
@@ -184,60 +166,23 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
         else:
             return self._model
 
-    def _configure_optimizer(self):
-        """Configures declearn Optimizer for scikit-learn if method
-        `init_optimizer` is provided in the TrainingPlan, otherwise considers
-        only scikit-learn internal optimization.
+    def init_optimizer(self) -> Optional[Optimizer]:
+        """Return an optional Optimizer to use for model training.
 
-        Raises:
-            FedbiomedTrainingPlanError: raised if no model has been found
-            FedbiomedTrainingPlanError: raised if more than one argument has been provided
-                to the `init_optim` method.
+        Researchers may override this method to return an
+        [Optimizer][fedbiomed.common.optimizers.Optimizer] instance, which
+        will replace the default scikit-learn internal vanilla SGD optimizer.
+
+        The `self.optimizer_args()` method may be used to access parameters
+        received from the researcher so as to configure the returned optimizer.
+
+        Returns:
+            None, resulting in the scikit-learn model's internal optimizer
+                being used. Subclasses may return an `Optimizer` instead.
         """
-        # Message to format for unexpected argument definitions in special methods
-        method_error = \
-            ErrorNumbers.FB605.value + ": Special method `{method}` has more than one argument: {keys}. This method " \
-                                       "can not have more than one argument/parameter (for {prefix} arguments) or " \
-                                       "method can be defined without argument and `{alternative}` can be used for " \
-                                       "accessing {prefix} arguments defined in the experiment."
-        
-        if self._model is None:
-            raise FedbiomedTrainingPlanError("can not configure optimizer, Model is None")
-        # Get optimizer defined by researcher ---------------------------------------------------------------------
-        init_optim_spec = get_method_spec(self.init_optimizer)
-        if not init_optim_spec:
-            optimizer = self.init_optimizer()
-        elif len(init_optim_spec.keys()) == 1:
-            optimizer = self.init_optimizer(self._optimizer_args)
-        else:
-            raise FedbiomedTrainingPlanError(method_error.format(prefix="optimizer",
-                                                                 method="init_optimizer",
-                                                                 keys=list(init_optim_spec.keys()),
-                                                                 alternative="self.optimizer_args()"))
-        # create optimizer builder
-        optim_builder = OptimizerBuilder()
-        
-        # then build optimizer wrapper given model and optimizer
-        self._optimizer = optim_builder.build(self.__type, self._model, optimizer) 
-        
-        # if optimizer is None:
-        #     # default case: no optimizer is passed, using native sklearn optimizer
-        #     logger.debug("Using native sklearn optimizer")
-        #     self._optimizer = NativeSkLearnOptimizer(self._model)
-        # elif isinstance(optimizer, (DeclearnOptimizer, FedOptimizer)):
-        #     logger.debug("using a declearn Optimizer")
-        #     if isinstance(optimizer, FedOptimizer):
-        #         optimizer = FedOptimizer(optimizer)
-        #     self._optimizer = SkLearnOptimizer(self._model, optimizer)
-            
-        # else:
-        #     raise FedbiomedTrainingPlanError(f"{ErrorNumbers.FB605.value}: Optimizer should be a declearn optimizer, but got {type(optimizer)}. If you want to use only native scikit learn optimizer, please do not define a `init_optimizer` method in the TrainingPlan")
+        return None
 
-    def init_optimizer(self) -> None:
-        """Default optimizer, which basically returns None (meaning native inner scikit learn optimization will be used)"""
-        pass
-
-    def optimizer_args(self) -> Dict:
+    def optimizer_args(self) -> Dict[str, Any]:
         """Retrieves optimizer arguments
 
         Returns:
@@ -260,10 +205,9 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
                 supported for scikit-learn models and thus will be ignored.
         """
         if self._optimizer is None:
-            raise FedbiomedTrainingPlanError('Optimizer is None, please run `post_init` beforehand')
-
-        # Run preprocesses
-        self._preprocess()
+            raise FedbiomedTrainingPlanError(
+                'Optimizer is None, please run `post_init` beforehand.'
+            )
         if not isinstance(self.training_data_loader, NPDataLoader):
             msg = (
                 f"{ErrorNumbers.FB310.value}: SKLearnTrainingPlan cannot "
@@ -288,7 +232,7 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
                 f"the model: {exc}"
             )
             logger.critical(msg)
-            raise FedbiomedTrainingPlanError(msg)
+            raise FedbiomedTrainingPlanError(msg) from exc
 
     @abstractmethod
     def _training_routine(
@@ -361,7 +305,8 @@ class SKLearnTrainingPlan(BaseTrainingPlan, metaclass=ABCMeta):
             Numpy array containing the unique values from the targets wrapped
             in the training and testing NPDataLoader instances.
         """
-        return np.unique([t for loader in (self.training_data_loader, self.testing_data_loader) for d, t in loader])
+        loaders = (self.training_data_loader, self.testing_data_loader)
+        return np.unique([t for loader in loaders for d, t in loader])
 
     def type(self) -> TrainingPlans:
         """Getter for training plan type """

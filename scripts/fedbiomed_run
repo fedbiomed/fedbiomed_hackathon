@@ -336,7 +336,7 @@ case $1 in
                         This command will be removed in the future releases. \
                         Please use ${BLD}fedbiomed_run node --config [CONFIG_FILE] dataset delete --mnist${NC}"
                 $basedir/scripts/fedbiomed node --config "$CONFIG_FILE" dataset delete --mnist
-                exit 0    
+                exit 0
                 ;;
             add|--add|-a)
                 deprecation_warning "fedbiomed_run node add | --add | -a is deprecated.\
@@ -398,7 +398,7 @@ case $1 in
                         Please use ${BLD}fedbiomed_run node --config [CONFIG_FILE] training-plan list${NC}"
                 $basedir/scripts/fedbiomed node --config "$CONFIG_FILE" training-plan list
                 exit 0
-                ;; 
+                ;;
             delete-training-plan|--delete-training-plan|-dtp)
                 deprecation_warning "fedbiomed_run node delete-training-plan is deprecated.\
                         This command will be removed in the future releases. \
@@ -428,7 +428,7 @@ case $1 in
         else
             export PARAMS=
         fi
-        
+
         # All unkown arguments goes to node cli
         EXTRA_PARAMS=${@:2}
         $basedir/scripts/fedbiomed node $EXTRA_PARAMS

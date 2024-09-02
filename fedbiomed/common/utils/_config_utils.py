@@ -154,5 +154,4 @@ def create_fedbiomed_setup_folders(root: str):
     tmp_dir  = os.path.join(var_dir, TMP_FOLDER_NAME)
 
     for dir_ in [etc_config_dir, var_dir, cache_dir, tmp_dir]:
-        if not os.path.isdir(dir_):
-            os.makedirs(dir_)
+        os.makedirs(dir_, exist_ok=True)

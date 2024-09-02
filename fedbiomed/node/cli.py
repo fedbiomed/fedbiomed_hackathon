@@ -622,6 +622,12 @@ class NodeCLI(CommonCLI):
         super().initialize()
 
 
-if __name__ == '__main__':
+
+def main():
+    """Runs node CLI"""
     cli = NodeCLI()
     cli.parse_args()
+
+
+if __name__ == "__main__":
+    main()

@@ -10,22 +10,20 @@ from schemas import Validator
 
 
 def set_password_hash(password: str) -> str:
-    """ Method for setting password hash 
-    Args: 
+    """ Method for setting password hash
+    Args:
 
         password (str): Password of the user
     """
     return sha512(password.encode('utf-8')).hexdigest()
 
+def read_config(config_file: str):
+     """ This method parse given config file.
 
-def get_node_id(config_file: str):
-    """ This method parse given config file and returns node_id
-        specified in the node config file.
+    Args:
 
-    Args: 
-
-        config_file     (str): Path for config file of the node that 
-                        GUI services will run for
+        config_file: Path for config file of the node that
+            GUI services will run for
     """
 
     cfg = configparser.ConfigParser()
@@ -36,7 +34,21 @@ def get_node_id(config_file: str):
             f'Config file does not exist, can not start flask app. Please check following path exists in your file '
             f'system {config_file}')
 
-    # Get node id from config file 
+    return cfg
+
+
+def get_node_id(config_file: str):
+    """ This method parse given config file and returns node_id
+        specified in the node config file.
+
+    Args:
+
+        config_file     (str): Path for config file of the node that
+                        GUI services will run for
+    """
+
+    cfg = read_config(config_file)
+    # Get node id from config file
     node_id = cfg.get('default', 'id')
 
     return node_id
@@ -44,7 +56,7 @@ def get_node_id(config_file: str):
 
 def error(msg: str):
     """ Function that returns jsonfied error result
-        it is used for API enpoints  
+        it is used for API enpoints
     Args:
 
         msg     (str): Response message for failed request.
@@ -78,7 +90,7 @@ def success(msg: str):
 def response(data: dict, message: str = None):
     """ Global response function that returns jsonfied
         dictionary. It is used when the API endpoint returns
-        data. 
+        data.
 
     Args:
         data (dict): Data that will be sent as a response of the
@@ -122,10 +134,10 @@ def validate_json(function):
 
 def validate_request_data(schema: Validator):
     """ Validate reqeusted data. This wrapper method gets schema
-        and applies validation based on provided information 
+        and applies validation based on provided information
         in schema
 
-        Args: 
+        Args:
             schema (Validator) : Schema class to check inputs in
                                 request object
     """

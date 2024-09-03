@@ -60,7 +60,7 @@ class Config(dict):
 
         self.configuration['DEFAULT_ADMIN_CREDENTIAL'] = {'email': cfg.get('init_admin', 'email'),
                                                           'password': cfg.get('init_admin', 'password')}
-        
+
         # -----------------------------------------------------------------------------------------------------------
 
         # Node config file ------------------------------------------------------------------------------------------
@@ -103,8 +103,8 @@ class Config(dict):
 
         # TODO: Let users decide which port they would like to use
         # Serve  configurations PORT and IP
-        self.configuration['PORT'] = os.getenv('PORT', cfg.get('server', 'PORT', fallback=8484))
-        self.configuration['HOST'] = os.getenv('HOST', cfg.get('server', 'HOST', fallback='localhost'))
+        self.configuration['PORT'] = os.getenv('FBM_NODE_GUI_PORT', cfg.get('server', 'PORT', fallback=8484))
+        self.configuration['HOST'] = os.getenv('FBM_NODE_GUI_HOST', cfg.get('server', 'HOST', fallback='localhost'))
 
         # Log information for setting up a node connection
         print(f'INFO: Fed-BioMed Node root dir has been set as '

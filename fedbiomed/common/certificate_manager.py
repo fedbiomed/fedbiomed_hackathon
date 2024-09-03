@@ -468,7 +468,7 @@ class CertificateManager:
 
 
 def retrieve_ip_and_port(
-        root: str, 
+        root: str,
         new: bool = False,
         increment: Union[int, None] = None
 ) -> Tuple[str, str]:
@@ -505,7 +505,7 @@ def retrieve_ip_and_port(
 
 
 def generate_certificate(
-    root,
+    path,
     component_id,
     prefix: Optional[str] = None,
     subject: Optional[Dict[str, str]] = None
@@ -524,19 +524,17 @@ def generate_certificate(
             `certificate.key` files generated.
     """
 
-    certificate_path = os.path.join(root, CERTS_FOLDER_NAME, f"cert_{component_id}")
 
-    if os.path.isdir(certificate_path) \
-            and (os.path.isfile(os.path.join(certificate_path, "certificate.key")) or
-                 os.path.isfile(os.path.join(certificate_path, "certificate.pem"))):
-
-        raise ValueError(f"Certificate generation is aborted. Directory {certificate_path} has already "
+    if os.path.isdir(path) \
+            and (os.path.isfile(os.path.join(path, "certificate.key")) or
+                 os.path.isfile(os.path.join(path, "certificate.pem"))):
+        raise ValueError(f"Certificate generation is aborted. Directory {path} has already "
                          f"certificates. Please remove those files to regenerate")
-    else:
-        os.makedirs(certificate_path, exist_ok=True)
+
+    os.makedirs(path, exist_ok=True)
 
     key_file, pem_file = CertificateManager.generate_self_signed_ssl_certificate(
-        certificate_folder=certificate_path,
+        certificate_folder=path,
         certificate_name=prefix if prefix else '',
         component_id=component_id,
         subject=subject

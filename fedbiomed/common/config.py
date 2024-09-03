@@ -1,63 +1,41 @@
 # This file is originally part of Fed-BioMed
 # SPDX-License-Identifier: Apache-2.0
 
-import configparser
 import os
 import uuid
+import pathlib
+import configparser
 
 from abc import ABCMeta, abstractmethod
-from typing import Any, Optional, Dict
 
 from fedbiomed.common.constants import (
-    ErrorNumbers,
     MPSPDZ_certificate_prefix,
-    CONFIG_FOLDER_NAME,
     VAR_FOLDER_NAME,
-    DB_PREFIX
+    TMP_FOLDER_NAME,
+    CACHE_FOLDER_NAME,
+    DB_PREFIX,
 )
 from fedbiomed.common.utils import (
-    create_fedbiomed_setup_folders,
     raise_for_version_compatibility,
-    CONFIG_DIR,
-    ROOT_DIR
 )
-from fedbiomed.common.certificate_manager import retrieve_ip_and_port, generate_certificate
+from fedbiomed.common.certificate_manager import generate_certificate
 from fedbiomed.common.exceptions import FedbiomedError
-from fedbiomed.common.secagg_manager import SecaggBiprimeManager
+
+
+CONFIG_FILE_NAME = "config.ini"
+
 
 class Config(metaclass=ABCMeta):
     """Base Config class"""
 
-    _DEFAULT_CONFIG_FILE_NAME: str = 'config'
-    _COMPONENT_TYPE: str
     _CONFIG_VERSION: str
 
-    def __init__(
-        self,
-        root = None,
-        name: Optional[str] = None,
-        auto_generate: bool = True
-    ) -> None:
-        """Initializes config"""
+    def __init__(self, config: str, auto_generate: bool = True) -> None:
+        """Initializes configuration"""
 
         # First try to get component specific config file name, then CONFIG_FILE
-        default_config = os.getenv(
-            f'{self._COMPONENT_TYPE}_CONFIG_FILE',
-            os.getenv('CONFIG_FILE', self._DEFAULT_CONFIG_FILE_NAME))
-
-        self.root = root
+        self._config_file = config
         self._cfg = configparser.ConfigParser()
-        self.name = name if name else default_config
-
-        if self.root:
-            self.path = os.path.join(self.root, CONFIG_FOLDER_NAME, self.name)
-            self.root = self.root
-        else:
-            self.path = os.path.join(CONFIG_DIR, self.name)
-            self.root = ROOT_DIR
-
-        # Creates setup folders if not existing
-        create_fedbiomed_setup_folders(self.root)
 
         if auto_generate:
             self.generate()
@@ -79,7 +57,7 @@ class Config(metaclass=ABCMeta):
             True if config file is already existing
         """
 
-        return os.path.isfile(self.path)
+        return os.path.isfile(self._config_file)
 
     def read(self) -> bool:
         """Reads configuration file that is already existing in given path
@@ -87,13 +65,14 @@ class Config(metaclass=ABCMeta):
         Raises verision compatibility error
         """
 
-        self._cfg.read(self.path)
+        self._cfg.read(self._config_file)
 
         # Validate config version
         raise_for_version_compatibility(
             self._cfg["default"]["version"],
             self._CONFIG_VERSION,
-            f"Configuration file {self.path}: found version %s expected version %s")
+            f"Configuration file {self.path}: found version %s expected version %s",
+        )
 
         return True
 
@@ -102,12 +81,12 @@ class Config(metaclass=ABCMeta):
 
         return self._cfg.get(section, key, **kwargs)
 
-
     def set(self, section, key, value) -> None:
-        """Sets config section values
+        """Sets configuration section values
 
         Args:
-            section: the name of the config file section as defined by the `ini` standard
+            section: the name of the configuration file section as defined
+                by the `.ini` standard
             key: the name of the attribute to be set
             value: the value of the attribute to be set
 
@@ -121,38 +100,17 @@ class Config(metaclass=ABCMeta):
 
         return self._cfg.sections()
 
-    def write(self):
+    def write(self) -> None:
         """Writes config file"""
 
-        try:
-            with open(self.path, 'w') as f:
-                self._cfg.write(f)
-        except configparser.Error:
-            raise IOError(ErrorNumbers.FB600.value + ": cannot save config file: " + self.path)
+        with open(self._config_file, "w", encoding="UTF-8") as f:
+            self._cfg.write(f)
 
-
-    def _default(
-        self,
-        id: Optional[str] = None
-    ) -> Dict:
-        """Genereates default section of configuration
+    def generate(self, force: bool = False, component_id: str | None = None) -> bool:
+        """ "Generate configuration file
 
         Args:
-          id: Component ID
-        """
-
-
-        return self._cfg['default']
-
-    def generate(
-        self,
-        force: bool = False,
-        id: Optional[str] = None
-    ) -> bool:
-        """"Generate configuration file
-
-        Args:
-            force: Overwrites existing configration file
+            force: Overwrites existing configuration file
             id: Component ID
         """
 
@@ -160,45 +118,36 @@ class Config(metaclass=ABCMeta):
         if self.is_config_existing() and not force:
             return self.read()
 
+        component_root = os.path.dirname(self._config_file)
 
         # Create default section
-        component_id = id if id else f"{self._COMPONENT_TYPE}_{uuid.uuid4()}"
+        component_id = (
+            component_id if component_id else f"{self._COMPONENT_TYPE}_{uuid.uuid4()}"
+        )
 
-        self._cfg['default'] = {
-            'id': component_id,
-            'component': self._COMPONENT_TYPE,
-            'version': str(self._CONFIG_VERSION)
+        self._cfg["default"] = {
+            "id": component_id,
+            "component": self._COMPONENT_TYPE,
+            "version": str(self._CONFIG_VERSION),
         }
 
-        db_path  = os.path.join(self.root, VAR_FOLDER_NAME, f"{DB_PREFIX}{component_id}.json")
-        self._cfg['default']['db'] = os.path.relpath(db_path, os.path.join(self.root, CONFIG_FOLDER_NAME))
+        db_path = os.path.join(component_root, f"{DB_PREFIX}{component_id}.json")
 
-
-        ip, port = retrieve_ip_and_port(self.root)
-        allow_default_biprimes = os.getenv('ALLOW_DEFAULT_BIPRIMES', True)
+        self._cfg["default"]["db"] = db_path
 
         # Generate self-signed certificates
         key_file, pem_file = generate_certificate(
-            root=self.root,
+            path=os.path.join(component_root, "certs"),
             component_id=component_id,
-            prefix=MPSPDZ_certificate_prefix)
+            prefix=MPSPDZ_certificate_prefix,
+        )
 
-        self._cfg['mpspdz'] = {
-            'private_key': os.path.relpath(key_file, os.path.join(self.root, 'etc')),
-            'public_key': os.path.relpath(pem_file, os.path.join(self.root, 'etc')),
-            'mpspdz_ip': ip,
-            'mpspdz_port': port,
-            'allow_default_biprimes': allow_default_biprimes,
-            'default_biprimes_dir': os.path.relpath(
-                os.path.join(self.root, 'envs', 'common', 'default_biprimes'),
-                os.path.join(self.root, 'etc')
-            )
+        self._cfg["mpspdz"] = {
+            "private_key": key_file,
+            "public_key": pem_file,
         }
 
-        # Register default biprime
-        self._register_default_biprime(db_path)
-
-        # Calls child class add_parameterss
+        # Calls child class add_parameters
         self.add_parameters()
 
         # Write configuration file
@@ -206,41 +155,64 @@ class Config(metaclass=ABCMeta):
 
     @abstractmethod
     def add_parameters(self):
-        """"Component specific argument creation"""
+        """ "Component specific argument creation"""
 
     def refresh(self):
         """Refreshes config file by recreating all the fields without
-          chaning component ID.
+        chaning component ID.
         """
 
         if not self.is_config_existing():
             raise FedbiomedError("Can not refresh config file that is not existing")
 
         # Read the config
-        self._cfg.read(self.path)
-        id = self._cfg["default"]['id']
+        self._cfg.read(self._config_file)
+        component_id = self._cfg["default"]["id"]
 
         # Generate by keeping the component ID
-        self.generate(force=True, id=id)
+        self.generate(force=True, component_id=component_id)
 
-    def _register_default_biprime(self, db_path: str):
-        """Registers default biprime into database
 
-        Args:
-            db_path: The path to component's DB file.
-        """
+class Component:
 
-        df_biprimes = self._cfg.get('mpspdz', 'allow_default_biprimes')
-        biprimes_dir = os.path.normpath(
-            os.path.join(self.root, self.name, self._cfg.get('mpspdz', 'default_biprimes_dir'))
-        )
-        # Update secure aggregation biprimes in component database
-        print(
-            "Updating secure aggregation default biprimes with:\n"
-            f"ALLOW_DEFAULT_BIPRIMES : {df_biprimes}\n"
-            f"DEFAULT_BIPRIMES_DIR   : {biprimes_dir}\n"
-        )
+    _COMPONENT_TYPE: str
+    _CONFIG_CLASS: Config
+    _FOLDERS: list[str] = []
 
-        BPrimeManager = SecaggBiprimeManager(db_path)
-        BPrimeManager.update_default_biprimes(df_biprimes, biprimes_dir)
+    def __init__(self, path: str | None = None) -> None:
 
+        # If there is path provided use it otherwise it is the working directory
+        self._path = os.path.abspath(path) if path else os.getcwd()
+        self._config = self._CONFIG_CLASS(conf=os.path.join(path, CONFIG_FILE_NAME))
+
+    def create(self) -> None:
+        """Creates component folder and instantiate a config object"""
+
+        if not os.path.isdir(self._path):
+            os.makedirs(self._path)
+        else:
+            self._validate_root_path()
+
+        var_dir = os.path.join(self._path, VAR_FOLDER_NAME)
+        cache_dir = os.path.join(var_dir, CACHE_FOLDER_NAME)
+        tmp_dir = os.path.join(var_dir, TMP_FOLDER_NAME)
+
+        for folder in [*self._FOLDERS, var_dir, cache_dir, tmp_dir]:
+            pathlib.Path(os.path.join(self._path, folder)).mkdir(exist_ok=True)
+
+    def _validate_root_path(self) -> None:
+        """Validate if a new component can be created in given path"""
+
+        fedbiomed_com = os.path.join(self._path, ".fedbiomed-component")
+        if os.path.isfile(fedbiomed_com):
+            with open(fedbiomed_com, "r", encoding="UTF-8") as file:
+                component = file.read()
+                if component != self._COMPONENT_TYPE:
+                    raise FedbiomedError(
+                        f"There is a different component already instatiated in the given "
+                        f"component root path {self._path}. Component already instaiated "
+                        f"{component}, can not create component {self._COMPONENT_TYPE} "
+                    )
+        else:
+            with open(fedbiomed_com, "w", encoding="UTF-8") as file:
+                file.write(f"{self._COMPONENT_TYPE}")

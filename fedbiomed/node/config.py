@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+import pathlib
 from fedbiomed.common.constants import HashingAlgorithms, __node_config_version__
-from fedbiomed.common.config import Config
+from fedbiomed.common.config import Config, Component
 
-# Important: Do not import environ class in this module
-# It will cause problem of recursive import
+
 
 class NodeConfig(Config):
 
@@ -32,3 +32,10 @@ class NodeConfig(Config):
             'ip': os.getenv('RESEARCHER_SERVER_HOST', 'localhost'),
             'port': os.getenv('RESEARCHER_SERVER_PORT', '50051')
         }
+
+
+class NodeComponent(Component):
+
+    _FOLDERS: list[str] = ['certs', 'tmp', 'var']
+    _COMPONENT_TYPE: str = "NODE"
+    _CONFIG_CLASS: Config = NodeConfig

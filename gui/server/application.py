@@ -76,8 +76,3 @@ def hsts_header():
 
     return hsts_policy
 
-
-# Run the application
-if __name__ == '__main__':
-    # Start Flask
-    app.run(debug=app.config['DEBUG'])

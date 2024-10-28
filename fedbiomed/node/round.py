@@ -26,7 +26,6 @@ from fedbiomed.common.serializer import Serializer
 from fedbiomed.common.training_args import TrainingArgs
 from fedbiomed.common import utils
 
-from fedbiomed.node.environ import environ
 from fedbiomed.node.history_monitor import HistoryMonitor
 from fedbiomed.node.node_state_manager import NodeStateManager, NodeStateFileName
 from fedbiomed.node.secagg import SecaggRound
@@ -40,6 +39,9 @@ class Round:
 
     def __init__(
         self,
+        root_dir: str,
+        db: str,
+        node_id: str,
         training_plan: str,
         training_plan_class: str,
         model_kwargs: dict,
@@ -52,6 +54,7 @@ class Round:
         history_monitor: HistoryMonitor,
         aggregator_args: Dict[str, Any],
         node_args: Dict,
+        tp_security_manager: TrainingPlanSecurityManager,
         round_number: int = 0,
         dlp_and_loading_block_metadata: Optional[Tuple[dict, List[dict]]] = None,
         aux_vars: Optional[List[str]] = None,
@@ -59,6 +62,10 @@ class Round:
         """Constructor of the class
 
         Args:
+            root_dir: Root fedbiomed directory where node instance files will be stored.
+            db: Path to node database file.
+            node_id: Node id
+            tp_security_manager: Training plan security manager instance.
             training_plan: code of the training plan for this round
             training_plan_class: class name of the training plan
             model_kwargs: contains model args. Defaults to None.
@@ -82,6 +89,9 @@ class Round:
             round_number: number of the iteration for this experiment
             aux_var: auxiliary variables of the model.
         """
+        self._node_id = node_id
+        self._db = db
+        self._dir = root_dir
 
         self.dataset = dataset
         self.training_plan_source = training_plan
@@ -99,16 +109,17 @@ class Round:
         self.model_arguments = model_kwargs
 
         # Class attributes
-        self.tp_security_manager = TrainingPlanSecurityManager()
+        self.tp_security_manager = tp_security_manager
         self.training_plan = None
         self.testing_arguments = None
         self.loader_arguments = None
         self.training_arguments = None
         self._secure_aggregation = None
         self._round = round_number
-        self._node_state_manager: NodeStateManager = NodeStateManager(environ['DB_PATH'])
-
-        self._keep_files_dir = tempfile.mkdtemp(prefix=environ['TMP_DIR'])
+        self._node_state_manager: NodeStateManager = NodeStateManager(
+            self._dir, self._node_id, self._db
+        )
+        self._keep_files_dir = tempfile.mkdtemp()
 
     def __del__(self):
         """Class destructor"""
@@ -154,8 +165,12 @@ class Round:
 
     def run_model_training(
             self,
-            secagg_arguments: Union[Dict, None] = None,
-    ) -> Optional[Dict[str, Any]]:
+            tp_approval: bool,
+            secagg_insecure_validation: bool,
+            secagg_active: bool,
+            force_secagg: bool,
+            secagg_arguments: Union[Dict[str, Any], None] = None,
+    ) -> TrainReply:
         """Runs one round of model training
 
         Args:
@@ -167,7 +182,14 @@ class Round:
         # Validate secagg status. Raises error if the training request is not compatible with
         # secure aggregation settings
         try:
-            self._secure_aggregation = SecaggRound(secagg_arguments, self.experiment_id)
+            self._secure_aggregation = SecaggRound(
+                db=self._db,
+                node_id=self._node_id,
+                secagg_arguments=secagg_arguments,
+                secagg_active=secagg_active,
+                force_secagg=force_secagg,
+                experiment_id=self.experiment_id
+            )
         except FedbiomedSecureAggregationError as e:
             logger.error(str(e))
             return self._send_round_reply(
@@ -175,7 +197,7 @@ class Round:
                 message='Could not configure secure aggregation on node')
 
         # Validate and load training plan
-        if environ["TRAINING_PLAN_APPROVAL"]:
+        if tp_approval:
             approved, training_plan_ = self.tp_security_manager.\
                 check_training_plan_status(
                     self.training_plan_source,
@@ -184,7 +206,7 @@ class Round:
             if not approved:
                 return self._send_round_reply(
                     False,
-                    f'Requested training plan is not approved by the node: {environ["NODE_ID"]}')
+                    f'Requested training plan is not approved by the node: {self._node_id}')
             else:
                 logger.info(f'Training plan has been approved by the node {training_plan_["name"]}',
                             researcher_id=self.researcher_id)
@@ -351,7 +373,9 @@ class Round:
 
                 results["encrypted"] = True
                 results["encryption_factor"] = None
-                if self._secure_aggregation.scheme.secagg_random is not None and environ['SECAGG_INSECURE_VALIDATION']:
+                if self._secure_aggregation.scheme.secagg_random is not None and \
+                    secagg_insecure_validation:
+
                     results["encryption_factor"] = self._secure_aggregation.scheme.encrypt(
                         params=[self._secure_aggregation.scheme.secagg_random],
                         current_round=self._round,
@@ -407,7 +431,7 @@ class Round:
 
         # If round is not successful log error message
         return TrainReply(**{
-            'node_id': environ['NODE_ID'],
+            'node_id': self._node_id,
             'experiment_id': self.experiment_id,
             'state_id': self._node_state_manager.state_id,
             'researcher_id': self.researcher_id,
@@ -571,11 +595,13 @@ class Round:
             if aux_var and (self._secure_aggregation is None or self._secure_aggregation.use_secagg):
                 # TODO: remove the following warning when secagg compatibility has been fixed
                 # if secagg is used, raise a warning that encryption is not working with auxiliary variable
-                logger.warning(f'Node {environ["NODE_ID"]} optimizer is sending auxiliary variables to the '
-                               'Researcher, but those are not encrypted with SecAgg.'
-                               'Auxiliary Variables may contain sensitive information about the Nodes.'
-                               'This issue will be fixed in a future version of Fed-BioMed',
-                               researcher_id=self.researcher_id)
+                logger.warning(
+                    f'Node {self._node_id} optimizer is sending auxiliary variables to the '
+                    'Researcher, but those are not encrypted with SecAgg.'
+                    'Auxiliary Variables may contain sensitive information about the Nodes.'
+                    'This issue will be fixed in a future version of Fed-BioMed',
+                    researcher_id=self.researcher_id
+                )
             return aux_var
         return {}
 

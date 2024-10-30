@@ -4,10 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, create_autospec, patch
 
-from testsupport.base_case import ResearcherTestCase  # Import ResearcherTestCase before importing any FedBioMed Module
-from testsupport.base_mocks import MockRequestModule
 from testsupport.fake_training_plan import FakeTorchTrainingPlan
-from testsupport import fake_training_plan
 
 from fedbiomed.common.constants import TrainingPlanApprovalStatus
 from fedbiomed.common.message import \
@@ -16,18 +13,20 @@ from fedbiomed.common.training_args import TrainingArgs
 from fedbiomed.common.training_plans import BaseTrainingPlan
 
 from fedbiomed.researcher.datasets import FederatedDataSet
-from fedbiomed.researcher.environ import environ
-from fedbiomed.researcher.requests import DiscardOnTimeout
+from fedbiomed.researcher.requests import DiscardOnTimeout, Requests
 from fedbiomed.researcher.federated_workflows.jobs import \
     Job, TrainingJob, TrainingPlanApproveJob, TrainingPlanCheckJob
+from fedbiomed.researcher.config import config
 
-
-class TestJob(ResearcherTestCase, MockRequestModule):
+class TestJob(unittest.TestCase):
     """Tests Job class and all of its subclasses"""
     def setUp(self):
-        MockRequestModule.setUp(self, module="fedbiomed.researcher.federated_workflows.jobs._job.Requests")
         self.patch_serializer = patch("fedbiomed.common.serializer.Serializer")
         self.mock_serializer = self.patch_serializer.start()
+
+        self.request_mock = MagicMock(spec=Requests)
+        self.federated_request_mock = MagicMock()
+        self.request_mock.send.return_value.__enter__.return_value = self.federated_request_mock
 
         # Globally create mock for Model and FederatedDataset
         self.model = create_autospec(BaseTrainingPlan, instance=False)
@@ -41,7 +40,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
         self.patch_serializer.stop()
 
         # Remove if there is dummy model file
-        tmp_dir = os.path.join(environ['TMP_DIR'], 'tmp_models')
+        tmp_dir = os.path.join(config.vars['TMP_DIR'], 'tmp_models')
         if os.path.isdir(tmp_dir):
             shutil.rmtree(tmp_dir)
 
@@ -54,13 +53,20 @@ class TestJob(ResearcherTestCase, MockRequestModule):
 
         nodes = MagicMock(spec=list)
         files_dir = '/path/to/my/files'
-        job = MinimalJob(nodes=nodes, keep_files_dir=files_dir)
+        job = MinimalJob(
+            requests=MagicMock(),
+            researcher_id='test-id',
+            nodes=nodes,
+            keep_files_dir=files_dir
+        )
         self.assertIsNotNone(job._keep_files_dir)  # must be initialized by Job
         self.assertTrue(isinstance(job._nodes, list) and len(job._nodes) == 0)  # nodes must be empty list by default
 
         # Job can take nodes and keep_files_dir as arguments
         mynodes = ['first-node', 'second-node']
         job = MinimalJob(
+            requests=MagicMock(),
+            researcher_id='test-id',
             nodes = mynodes,
             keep_files_dir='keep_files_dir'
         )
@@ -85,7 +91,8 @@ class TestJob(ResearcherTestCase, MockRequestModule):
         self.assertEqual(r, job._reqs)
 
 
-    @patch('fedbiomed.researcher.federated_workflows._training_plan_workflow.uuid.uuid4', return_value='UUID')
+    @patch('fedbiomed.researcher.federated_workflows.'
+        '_training_plan_workflow.uuid.uuid4', return_value='UUID')
     def test_job_02_training_job_successful(self, mock_uuid):
 
         # Initializing a training plan instance via Job must call:
@@ -120,6 +127,8 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                 # initialize TrainingJob
                 with tempfile.TemporaryDirectory() as fp:
                     job = TrainingJob(
+                        requests=self.request_mock,
+                        researcher_id='test-id',
                         experiment_id='some_id',
                         round_=1,
                         training_plan=mock_tp,
@@ -144,8 +153,8 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                         'bob': {'dataset_id': 'bob_data'},
                     })
 
-                    self.mock_federated_request.errors.return_value = {}
-                    self.mock_federated_request.replies.return_value = {
+                    self.federated_request_mock.errors.return_value = {}
+                    self.federated_request_mock.replies.return_value = {
                         'alice': TrainReply(**self._get_train_reply(
                             'alice',
                             self.fds.data()['alice']['dataset_id'],
@@ -166,7 +175,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                     else:
                         self.assertEqual(aux_vars, None)
 
-                    self.mock_requests.return_value.send.called_once_with(
+                    self.request_mock.send.called_once_with(
                         [
                             (
                                 {'alice': self._get_train_request(
@@ -179,7 +188,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
 
                     # populate expected replies
                     expected_replies = {}
-                    for node_id, r in self.mock_federated_request.replies.return_value.items():
+                    for node_id, r in self.federated_request_mock.replies.return_value.items():
                         expected_replies.update({
                             node_id: {
                                 **r.get_dict(),
@@ -189,7 +198,8 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                     self.assertDictEqual(training_replies, expected_replies)
 
 
-    @patch('fedbiomed.researcher.federated_workflows._training_plan_workflow.uuid.uuid4', return_value='UUID')
+    @patch('fedbiomed.researcher.federated_workflows.'
+        '_training_plan_workflow.uuid.uuid4', return_value='UUID')
     def test_job_03_training_job_failed(self, mock_uuid):
 
         # Initializing a training plan instance via Job must call:
@@ -250,6 +260,8 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                 # initialize TrainingJob
                 with tempfile.TemporaryDirectory() as fp:
                     job = TrainingJob(
+                        researcher_id='test-id',
+                        requests=self.request_mock,
                         experiment_id='some_id',
                         round_=1,
                         training_plan=mock_tp,
@@ -286,8 +298,8 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                                 success=success_status[node]))
                         else:
                             err[node] = ErrorMessage(**self._get_error_message(node))
-                    self.mock_federated_request.replies.return_value = ret
-                    self.mock_federated_request.errors.return_value = err
+                    self.federated_request_mock.replies.return_value = ret
+                    self.federated_request_mock.errors.return_value = err
 
                     # Execute the payload
                     with patch("time.perf_counter") as mock_perf_counter:
@@ -302,7 +314,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                             expected_aux_vars.setdefault('module', {})[node] = aux_var_return[node]['module']
                     self.assertDictEqual(aux_vars, expected_aux_vars)
 
-                    self.mock_requests.return_value.send.called_once_with(
+                    self.request_mock.send.called_once_with(
                         [
                             (
                                 {'alice': self._get_train_request(
@@ -315,7 +327,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
 
                     # populate expected replies
                     expected_replies = {}
-                    for node_id, r in self.mock_federated_request.replies.return_value.items():
+                    for node_id, r in self.federated_request_mock.replies.return_value.items():
                         if not error_status[node_id] and success_status[node_id]:
                             expected_replies.update({
                                 node_id: {
@@ -326,11 +338,12 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                     self.assertDictEqual(training_replies, expected_replies)
 
                     # minimal: check errors were recovered (no very significant test)
-                    self.mock_federated_request.errors.assert_called_once()
-                    self.mock_federated_request.reset_mock()
+                    self.federated_request_mock.errors.assert_called_once()
+                    self.federated_request_mock.reset_mock()
 
 
-    @patch('fedbiomed.researcher.federated_workflows.jobs._training_plan_approval_job.DiscardOnTimeout')
+    @patch('fedbiomed.researcher.federated_workflows.jobs.'
+        '_training_plan_approval_job.DiscardOnTimeout')
     def test_job_04_training_plan_approve_job(self, mock_policy_dot):
 
         mock_policy_dot = MagicMock(spec=DiscardOnTimeout)
@@ -355,6 +368,8 @@ class TestJob(ResearcherTestCase, MockRequestModule):
             # initialize TrainingJob
             with tempfile.TemporaryDirectory() as fp:
                 job = TrainingPlanApproveJob(
+                    researcher_id='test-id',
+                    requests=self.request_mock,
                     training_plan=mock_tp,
                     description='my test TP',
                     nodes = ['alice', 'bob'],
@@ -362,7 +377,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                 )
 
                 # prepare mocked node answers
-                self.mock_requests.return_value.training_plan_approve.return_value = success_status
+                self.request_mock.training_plan_approve.return_value = success_status
 
                 # execute the tested payload
                 with patch("time.perf_counter") as mock_perf_counter:
@@ -370,7 +385,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                     approval_replies = job.execute()
 
                 # check call of message sending to nodes
-                self.mock_requests.return_value.training_plan_approve.called_once_with(
+                self.request_mock.training_plan_approve.called_once_with(
                     [
                         (
                             mock_tp,
@@ -382,12 +397,16 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                 )
 
                 # check received the expected answers
-                self.assertDictEqual(approval_replies, self.mock_requests.return_value.training_plan_approve.return_value)
+                self.assertDictEqual(
+                    approval_replies, self.request_mock.training_plan_approve.return_value)
 
 
-    @patch('fedbiomed.researcher.federated_workflows.jobs._training_plan_approval_job.DiscardOnTimeout')
-    def test_job_05_training_plan_check_job(self,
-                                            mock_policy_dot):
+    @patch('fedbiomed.researcher.federated_workflows.'
+        'jobs._training_plan_approval_job.DiscardOnTimeout')
+    def test_job_05_training_plan_check_job(
+        self,
+        mock_policy_dot
+    ):
 
         mock_policy_dot = MagicMock(spec=DiscardOnTimeout)
 
@@ -422,6 +441,8 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                             # initialize TrainingJob
                             with tempfile.TemporaryDirectory() as fp:
                                 job = TrainingPlanCheckJob(
+                                    researcher_id='test-id',
+                                    requests=self.request_mock,
                                     experiment_id='any_unused_id',
                                     training_plan=mock_tp,
                                     nodes = ['alice', 'bob'],
@@ -435,8 +456,8 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                                     'bob': bob_approval_status,
                                 }
 
-                                self.mock_federated_request.errors.return_value = {}
-                                self.mock_federated_request.replies.return_value = {
+                                self.federated_request_mock.errors.return_value = {}
+                                self.federated_request_mock.replies.return_value = {
                                     'alice': TrainingPlanStatusReply(**self._get_status_reply(
                                         mock_tp,
                                         'alice',
@@ -462,8 +483,8 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                                             approval_status[node].value)
                                         )
 
-                                self.mock_federated_request.errors.return_value = err
-                                self.mock_federated_request.replies.return_value = ret
+                                self.federated_request_mock.errors.return_value = err
+                                self.federated_request_mock.replies.return_value = ret
 
                                 # execute tested payload
                                 with patch("time.perf_counter") as mock_perf_counter:
@@ -471,7 +492,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                                     check_replies = job.execute()
 
                                 # checks
-                                self.mock_requests.return_value.send.called_once_with(
+                                self.request_mock.send.called_once_with(
                                     [
                                         (
                                             {'alice': self._get_status_request(mock_tp),
@@ -481,9 +502,10 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                                     ]
                                 )
 
-                                self.assertDictEqual(check_replies, self.mock_federated_request.replies.return_value)
-
-                                # we lack a test using the errors but no obvious test for this case
+                                self.assertDictEqual(
+                                    check_replies,
+                                    self.federated_request_mock.replies.return_value
+                                )
 
 
     def _get_train_request(self,
@@ -494,7 +516,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                            data):
         return {
             'request_id': 'this_request',
-            'researcher_id': environ['RESEARCHER_ID'],
+            'researcher_id': 'test-id',
             'experiment_id': 'some_id',
             'training_args': {},
             'training': True,
@@ -519,7 +541,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                          success=True):
         return {
             'request_id': 'this_request',
-            'researcher_id': environ['RESEARCHER_ID'],
+            'researcher_id': 'test-id',
             'experiment_id': 'some_id',
             'success': success,
             'node_id': node_id,
@@ -539,7 +561,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                            node_id):
         return {
             'request_id': 'this_request',
-            'researcher_id': environ['RESEARCHER_ID'],
+            'researcher_id': 'test-id',
             'node_id': node_id,
             'errnum': 'a dummy error',
             'extra_msg': 'a dummy message',
@@ -550,7 +572,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                             ):
         return {
             'request_id': 'this_request',
-            'researcher_id': environ['RESEARCHER_ID'],
+            'researcher_id': 'test-id',
             'experiment_id': 'some_id',
             'training_plan': mock_tp.source(),
         }
@@ -563,7 +585,7 @@ class TestJob(ResearcherTestCase, MockRequestModule):
                           status='the TP approval status'):
         return {
             'request_id': 'this_request',
-            'researcher_id': environ['RESEARCHER_ID'],
+            'researcher_id': 'test-id',
             'node_id': node_id,
             'experiment_id': 'some_id',
             'success': success,

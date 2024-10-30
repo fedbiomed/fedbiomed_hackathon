@@ -1,6 +1,6 @@
 import unittest
 from itertools import product
-from unittest.mock import ANY, create_autospec, MagicMock, patch
+from unittest.mock import create_autospec, MagicMock, patch
 
 from declearn.model.api import Vector
 
@@ -8,15 +8,12 @@ from fedbiomed.common.exceptions import FedbiomedValueError, FedbiomedExperiment
 from fedbiomed.common.training_args import TrainingArgs
 from fedbiomed.common.metrics import MetricTypes
 
-#############################################################
-# Import ResearcherTestCase before importing any FedBioMed Module
 from fedbiomed.researcher.aggregators.aggregator import Aggregator
 from fedbiomed.researcher.datasets import FederatedDataSet
 
 from fedbiomed.researcher.strategies.default_strategy import DefaultStrategy
 from fedbiomed.researcher.monitor import Monitor
 from fedbiomed.researcher.node_state_agent import NodeStateAgent
-from testsupport.base_case import ResearcherTestCase
 from testsupport.base_mocks import MockRequestModule
 from testsupport.fake_researcher_secagg import FakeSecAgg
 from testsupport.fake_training_plan import (
@@ -32,7 +29,7 @@ from fedbiomed.researcher.federated_workflows.jobs import TrainingJob
 
 
 
-class TestExperiment(ResearcherTestCase, MockRequestModule):
+class TestExperiment(unittest.TestCase, MockRequestModule):
 
     def setUp(self):
         MockRequestModule.setUp(self, module="fedbiomed.researcher.federated_workflows._federated_workflow.Requests")

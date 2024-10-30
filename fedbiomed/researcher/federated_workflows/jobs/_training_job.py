@@ -177,7 +177,7 @@ class TrainingJob(Job):
         with self.RequestTimer(self._nodes) as timer:  # compute request time
             # Send training request
             with self._reqs.send(messages, self._nodes, self._policies) as federated_req:
-
+                print(federated_req)
                 errors = federated_req.errors()
                 replies = federated_req.replies()
 
@@ -271,7 +271,6 @@ class TrainingJob(Job):
             format `{mod_name: {node_id: node_dict}}`.
         """
         aux_var = {}  # type: Dict[str, Dict[str, Dict[str, Any]]]
-
         for node_id, reply in training_replies.items():
             node_av = reply.get("optim_aux_var", {})
             for module, params in node_av.items():

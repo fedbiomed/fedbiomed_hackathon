@@ -60,6 +60,7 @@ dependencies:
       - persist-queue >=0.5.1,<0.6.0
       # pandas 2.x recently released (2023-04) but few breaking changes
       - pandas ~=2.0.1
+      - pydicom
       - tensorboard ~=2.13.0
       - python-minifier ~=2.5.0
       - pathvalidate ~=3.0.0
